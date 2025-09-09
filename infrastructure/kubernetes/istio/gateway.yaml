@@ -1,0 +1,98 @@
+# Istio Gateway configuration for application ingress
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: app-ingress-gateway
+  namespace: app-prod
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    # HTTP (redirect to HTTPS)
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "api.example.com"
+        - "app.example.com"
+      tls:
+        httpsRedirect: true
+    
+    # HTTPS
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - "api.example.com"
+        - "app.example.com"
+      tls:
+        mode: SIMPLE
+        credentialName: app-example-com-tls # cert-manager generated
+
+---
+# VirtualService for BFF routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: bff-virtualservice
+  namespace: app-prod
+spec:
+  hosts:
+    - "api.example.com"
+  gateways:
+    - app-ingress-gateway
+  http:
+    # API routes to BFF
+    - match:
+        - uri:
+            prefix: "/api/"
+      timeout: 2s
+      retries:
+        attempts: 3
+        perTryTimeout: 600ms
+        retryOn: "5xx,connect-failure,refused-stream"
+      route:
+        - destination:
+            host: bff.app-prod.svc.cluster.local
+            port:
+              number: 8080
+
+    # Auth routes to Auth service
+    - match:
+        - uri:
+            prefix: "/auth/"
+      timeout: 5s
+      retries:
+        attempts: 2
+        perTryTimeout: 2s
+        retryOn: "5xx,connect-failure,refused-stream"
+      route:
+        - destination:
+            host: auth-service.app-prod.svc.cluster.local
+            port:
+              number: 8080
+
+---
+# VirtualService for frontend routing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: frontend-virtualservice
+  namespace: app-prod
+spec:
+  hosts:
+    - "app.example.com"
+  gateways:
+    - app-ingress-gateway
+  http:
+    # Serve React app
+    - match:
+        - uri:
+            prefix: "/"
+      route:
+        - destination:
+            host: frontend.app-prod.svc.cluster.local
+            port:
+              number: 80

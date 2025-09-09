@@ -1,0 +1,50 @@
+[importlinter]
+root_package = apps
+
+[contract:bff_layers]
+type = layers
+name = BFF layers
+layers =
+    apps.bff.presentation
+    apps.bff.application
+    apps.bff.domain
+containers =
+    apps.bff.infrastructure
+ignore_imports =
+    apps.bff.presentation -> apps.bff.infrastructure
+
+[contract:auth_layers]
+type = layers
+name = Auth Service layers
+layers =
+    apps.auth_service.presentation
+    apps.auth_service.application
+    apps.auth_service.domain
+containers =
+    apps.auth_service.infrastructure
+ignore_imports =
+    apps.auth_service.presentation -> apps.auth_service.infrastructure
+
+[contract:userprofiles_layers]
+type = layers
+name = UserProfiles layers
+layers =
+    apps.userprofiles_service.presentation
+    apps.userprofiles_service.application
+    apps.userprofiles_service.domain
+containers =
+    apps.userprofiles_service.infrastructure
+ignore_imports =
+    apps.userprofiles_service.presentation -> apps.userprofiles_service.infrastructure
+
+[contract:usersettings_layers]
+type = layers
+name = UserSettings layers
+layers =
+    apps.usersettings_service.presentation
+    apps.usersettings_service.application
+    apps.usersettings_service.domain
+containers =
+    apps.usersettings_service.infrastructure
+ignore_imports =
+    apps.usersettings_service.presentation -> apps.usersettings_service.infrastructure

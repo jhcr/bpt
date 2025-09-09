@@ -1,0 +1,129 @@
+# Istio security policies - mTLS, JWT verification, and authorization
+
+# Enable strict mTLS for all services in the namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default-strict-mtls
+  namespace: app-prod
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# JWT Authentication for user tokens
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: app-jwt-auth
+  namespace: app-prod
+spec:
+  jwtRules:
+    - issuer: "https://auth.example.com"
+      jwksUri: "https://auth.example.com/auth/.well-known/jwks.json"
+      forwardOriginalToken: true
+      audiences:
+        - "cloud-app"
+        - "internal" # For service tokens
+
+---
+# Authorization policy for user endpoints (requires user.read scope)
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: bff-user-endpoints
+  namespace: app-prod
+spec:
+  selector:
+    matchLabels:
+      app: bff
+  rules:
+    # User profile endpoints
+    - to:
+        - operation:
+            paths: ["/api/v1/user"]
+      when:
+        - key: request.auth.claims[scope]
+          values: ["*user.read*"]
+    
+    # User settings endpoints
+    - to:
+        - operation:
+            paths: ["/api/v1/user/settings*"]
+            methods: ["GET"]
+      when:
+        - key: request.auth.claims[scope]
+          values: ["*usersettings.read*"]
+    
+    - to:
+        - operation:
+            paths: ["/api/v1/user/settings*"]
+            methods: ["PUT", "POST", "DELETE"]
+      when:
+        - key: request.auth.claims[scope]
+          values: ["*usersettings.write*"]
+
+---
+# Authorization policy for service-to-service communication
+# Restrict /internal/ endpoints to service tokens only
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: internal-endpoints-service-only
+  namespace: app-prod
+spec:
+  selector:
+    matchLabels:
+      app: userprofiles-service
+  rules:
+    - to:
+        - operation:
+            paths: ["/internal/*"]
+      when:
+        - key: request.auth.claims[token_use]
+          values: ["svc"]
+        - key: request.auth.claims[aud]
+          values: ["internal"]
+        - key: request.auth.claims[sub]
+          values: ["spn:bff"]
+
+---
+# Authorization policy for UserSettings service internal endpoints
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: usersettings-internal-endpoints
+  namespace: app-prod
+spec:
+  selector:
+    matchLabels:
+      app: usersettings-service
+  rules:
+    - to:
+        - operation:
+            paths: ["/internal/*"]
+      when:
+        - key: request.auth.claims[token_use]
+          values: ["svc"]
+        - key: request.auth.claims[aud]
+          values: ["internal"]
+        - key: request.auth.claims[sub]
+          values: ["spn:bff"]
+
+---
+# Allow all traffic to Auth service (it handles its own authorization)
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: auth-service-allow-all
+  namespace: app-prod
+spec:
+  selector:
+    matchLabels:
+      app: auth-service
+  rules:
+    - {} # Allow all requests
+
+---
+# Deny all other traffic by default (implicit with Istio)
+# This ensures only explicitly allowed traffic is permitted
