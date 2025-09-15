@@ -17,7 +17,7 @@ fmt:
 
 lint:
 	ruff check .
-	import-linter lint
+	lint-imports --config .importlinter
 
 test:
 	pytest -q

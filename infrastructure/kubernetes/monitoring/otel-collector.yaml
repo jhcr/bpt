@@ -1,0 +1,166 @@
+# OpenTelemetry Collector DaemonSet for sidecar telemetry collection
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-collector
+  namespace: monitoring
+  labels:
+    app: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:latest
+        ports:
+        - containerPort: 4317 # OTLP gRPC
+        - containerPort: 4318 # OTLP HTTP
+        - containerPort: 8889 # Prometheus metrics
+        env:
+        - name: AWS_REGION
+          value: "us-east-1"
+        - name: AWS_XRAY_TRACING_NAME
+          value: "cloud-app"
+        volumeMounts:
+        - name: otel-config
+          mountPath: /etc/otelcol-contrib/
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+      volumes:
+      - name: otel-config
+        configMap:
+          name: otel-config
+      nodeSelector:
+        kubernetes.io/os: linux
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+  namespace: monitoring
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/OtelCollectorRole
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+  - name: metrics
+    port: 8889
+    targetPort: 8889
+  selector:
+    app: otel-collector
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'kubernetes-pods'
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: true
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
+      memory_limiter:
+        limit_mib: 512
+        spike_limit_mib: 128
+      resource:
+        attributes:
+          - key: service.name
+            from_attribute: service.name
+            action: upsert
+          - key: k8s.cluster.name
+            value: "cloud-app"
+            action: upsert
+
+    exporters:
+      # AWS X-Ray for traces
+      awsxray:
+        region: us-east-1
+        no_verify_ssl: false
+        
+      # Amazon Managed Prometheus for metrics
+      prometheusremotewrite:
+        endpoint: "https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-WORKSPACE-ID/api/v1/remote_write"
+        auth:
+          authenticator: sigv4auth
+          
+      # CloudWatch for logs
+      awscloudwatchlogs:
+        region: us-east-1
+        log_group_name: "/aws/containerinsights/cloud-app/application"
+        log_stream_name: "otel-collector"
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      pprof:
+        endpoint: 0.0.0.0:1777
+      zpages:
+        endpoint: 0.0.0.0:55679
+      sigv4auth:
+        region: us-east-1
+
+    service:
+      extensions: [health_check, pprof, zpages, sigv4auth]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch, resource]
+          exporters: [awsxray]
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [memory_limiter, batch, resource]
+          exporters: [prometheusremotewrite]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch, resource]
+          exporters: [awscloudwatchlogs]

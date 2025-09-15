@@ -35,15 +35,45 @@ export interface SessionResponse {
   server_public_key_jwk: JsonWebKey;
 }
 
-// Base query with authentication
+export interface SignupRequest {
+  email: string;
+  password: string;
+  given_name?: string;
+  family_name?: string;
+  phone_number?: string;
+}
+
+export interface SignupResponse {
+  message: string;
+  requires_confirmation: boolean;
+}
+
+export interface SocialProvider {
+  name: string;
+  display_name: string;
+  authorization_url: string;
+}
+
+export interface SocialProvidersResponse {
+  providers: SocialProvider[];
+}
+
+export interface OAuthAuthorizeResponse {
+  authorization_url: string;
+  state: string;
+  provider: string;
+}
+
+// Base query with authentication - connects to BFF service via proxy
 const baseQuery = fetchBaseQuery({
-  baseUrl: '/api',
+  baseUrl: '/',
   credentials: 'include', // Include cookies for httpOnly session
   prepareHeaders: (headers, { getState }) => {
     const token = (getState() as RootState).auth.accessToken;
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
     }
+    headers.set('Content-Type', 'application/json');
     return headers;
   },
 });
@@ -54,7 +84,7 @@ export const api = createApi({
   baseQuery,
   tagTypes: ['User', 'Settings'],
   endpoints: (builder) => ({
-    // Auth endpoints
+    // Auth endpoints (proxied to auth service)
     createSession: builder.mutation<SessionResponse, void>({
       query: () => ({
         url: '/auth/session',
@@ -78,15 +108,42 @@ export const api = createApi({
       }),
     }),
 
-    // User endpoints
+    refresh: builder.mutation<LoginResponse, void>({
+      query: () => ({
+        url: '/auth/refresh',
+        method: 'POST',
+      }),
+    }),
+
+    signup: builder.mutation<SignupResponse, SignupRequest>({
+      query: (data) => ({
+        url: '/auth/signup',
+        method: 'POST',
+        body: data,
+      }),
+    }),
+
+    // OAuth endpoints
+    getSocialProviders: builder.query<SocialProvidersResponse, void>({
+      query: () => '/auth/social/providers',
+    }),
+
+    getOAuthAuthorizeUrl: builder.query<OAuthAuthorizeResponse, { provider: string; redirectAfterLogin?: string }>({
+      query: ({ provider, redirectAfterLogin }) => ({
+        url: `/auth/social/${provider}/authorize`,
+        params: redirectAfterLogin ? { redirect_after_login: redirectAfterLogin } : undefined,
+      }),
+    }),
+
+    // User endpoints (via BFF service)
     getCurrentUser: builder.query<User, void>({
-      query: () => '/v1/user',
+      query: () => '/api/v1/user',
       providesTags: ['User'],
     }),
 
     getUserSettings: builder.query<any, { category?: string }>({
       query: ({ category }) => ({
-        url: '/v1/user/settings',
+        url: '/api/v1/user/settings',
         params: category ? { category } : undefined,
       }),
       providesTags: ['Settings'],
@@ -94,7 +151,7 @@ export const api = createApi({
 
     updateUserSettings: builder.mutation<any, { category: string; data: any; expectedVersion?: number }>({
       query: ({ category, data, expectedVersion }) => ({
-        url: `/v1/user/settings/${category}`,
+        url: `/api/v1/user/settings/${category}`,
         method: 'PUT',
         body: {
           data,
@@ -110,6 +167,10 @@ export const {
   useCreateSessionMutation,
   useLoginMutation,
   useLogoutMutation,
+  useRefreshMutation,
+  useSignupMutation,
+  useGetSocialProvidersQuery,
+  useGetOAuthAuthorizeUrlQuery,
   useGetCurrentUserQuery,
   useGetUserSettingsQuery,
   useUpdateUserSettingsMutation,

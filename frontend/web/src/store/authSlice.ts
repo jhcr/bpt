@@ -53,6 +53,23 @@ const authSlice = createSlice({
         state.accessToken = null;
         state.isAuthenticated = false;
         state.error = null;
+      })
+      // Refresh
+      .addMatcher(api.endpoints.refresh.matchPending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addMatcher(api.endpoints.refresh.matchFulfilled, (state, action) => {
+        state.isLoading = false;
+        state.accessToken = action.payload.access_token;
+        state.isAuthenticated = true;
+        state.error = null;
+      })
+      .addMatcher(api.endpoints.refresh.matchRejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.error.message || 'Token refresh failed';
+        state.isAuthenticated = false;
+        state.accessToken = null;
       });
   },
 });

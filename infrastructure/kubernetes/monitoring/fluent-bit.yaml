@@ -1,0 +1,214 @@
+# Fluent Bit DaemonSet for log collection from Istio sidecars and application pods
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: monitoring
+  labels:
+    app: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2
+        ports:
+        - containerPort: 2020
+        env:
+        - name: FLUENT_CONF
+          value: fluent-bit.conf
+        - name: FLUENT_OPT
+          value: --enable-hot-reload
+        - name: AWS_REGION
+          value: us-east-1
+        volumeMounts:
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: runlogpods
+          mountPath: /run/log/pods
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: runlogpods
+        hostPath:
+          path: /run/log/pods
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: monitoring
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/FluentBitRole
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit
+rules:
+- apiGroups: [""]
+  resources: ["namespaces", "pods", "nodes"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: monitoring
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: monitoring
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush                     1
+        Log_Level                 info
+        Daemon                    off
+        Parsers_File             parsers.conf
+        HTTP_Server              On
+        HTTP_Listen              0.0.0.0
+        HTTP_Port                2020
+        storage.path              /tmp/storage
+        storage.sync              normal
+        storage.checksum          off
+        storage.backlog.mem_limit 5M
+
+    [INPUT]
+        Name                tail
+        Path                /var/log/containers/*app-prod*.log,/var/log/containers/*app-dev*.log
+        exclude_path        /var/log/containers/*_kube-system_*, /var/log/containers/*_monitoring_*
+        multiline.parser    docker, cri
+        Tag                 kube.*
+        Mem_Buf_Limit       50MB
+        Skip_Long_Lines     On
+        storage.type        filesystem
+
+    [INPUT]
+        Name                tail
+        Path                /var/log/containers/*istio-proxy*.log
+        multiline.parser    docker, cri
+        Tag                 istio.*
+        Mem_Buf_Limit       50MB
+        Skip_Long_Lines     On
+        storage.type        filesystem
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Keep_Log            Off
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+
+    [FILTER]
+        Name                kubernetes
+        Match               istio.*
+        Keep_Log            Off
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+
+    [FILTER]
+        Name                nest
+        Match               kube.*
+        Operation           lift
+        Nested_under        kubernetes
+        Add_prefix          k8s_
+
+    [FILTER]
+        Name                modify
+        Match               *
+        Add                 cluster_name cloud-app
+        Add                 source_type kubernetes
+
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               kube.*
+        region              us-east-1
+        log_group_name      /aws/containerinsights/cloud-app/application
+        log_stream_prefix   kube-
+        auto_create_group   On
+        workers             1
+
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               istio.*
+        region              us-east-1
+        log_group_name      /aws/containerinsights/cloud-app/istio
+        log_stream_prefix   istio-
+        auto_create_group   On
+        workers             1
+
+  parsers.conf: |
+    [PARSER]
+        Name                docker
+        Format              json
+        Time_Key            time
+        Time_Format         %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep           On
+
+    [PARSER]
+        Name                cri
+        Format              regex
+        Regex               ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key            time
+        Time_Format         %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name                syslog-rfc5424
+        Format              regex
+        Regex               ^\<(?<pri>[0-9]{1,5})\>1 (?<time>[^ ]+) (?<host>[^ ]+) (?<ident>[^ ]+) (?<pid>[-0-9]+) (?<msgid>[^ ]+) (?<extradata>(\[(.*?)\]|-)) (?<message>.+)$
+        Time_Key            time
+        Time_Format         %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep           On

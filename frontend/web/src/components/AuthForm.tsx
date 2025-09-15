@@ -1,6 +1,6 @@
 // Custom authentication form with session cipher
 import React, { useState } from 'react';
-import { useCreateSessionMutation, useLoginMutation } from '../store/api';
+import { useCreateSessionMutation, useLoginMutation, useSignupMutation, useGetOAuthAuthorizeUrlQuery } from '../store/api';
 import { encryptPassword, SessionResponse } from '../lib/sessionCipher';
 
 interface AuthFormProps {
@@ -19,6 +19,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
 
   const [createSession] = useCreateSessionMutation();
   const [login] = useLoginMutation();
+  const [signup] = useSignupMutation();
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -107,8 +108,55 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   };
 
   const handleSignup = async () => {
-    // TODO: Implement signup flow
-    setErrors({ general: 'Signup not implemented yet' });
+    try {
+      const result = await signup({
+        email: formData.username,
+        password: formData.password,
+      }).unwrap();
+
+      // Show success message and switch to login
+      setErrors({ general: '' });
+      alert(`${result.message}${result.requires_confirmation ? ' Please check your email for a confirmation code.' : ''}`);
+
+      // Switch to login mode after successful signup
+      setIsLogin(true);
+      setFormData({ username: formData.username, password: '', confirmPassword: '' });
+
+    } catch (error: any) {
+      if (error.status === 409) {
+        setErrors({ general: 'An account with this email already exists' });
+      } else if (error.status === 400) {
+        setErrors({ general: error.data?.detail || 'Invalid signup data' });
+      } else {
+        setErrors({ general: 'Signup failed. Please try again.' });
+      }
+    }
+  };
+
+  const handleOAuthLogin = async (provider: string) => {
+    try {
+      setIsLoading(true);
+
+      // Get the current page URL to redirect back after login
+      const currentUrl = window.location.href;
+
+      // Get authorization URL from backend
+      const response = await fetch(`/auth/social/${provider}/authorize?redirect_after_login=${encodeURIComponent(currentUrl)}`);
+
+      if (!response.ok) {
+        throw new Error('Failed to get authorization URL');
+      }
+
+      const data = await response.json();
+
+      // Redirect to OAuth provider
+      window.location.href = data.authorization_url;
+
+    } catch (error) {
+      console.error(`${provider} OAuth error:`, error);
+      setErrors({ general: `Failed to connect with ${provider}. Please try again.` });
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -212,10 +260,20 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
       </div>
 
       <div className="social-login">
-        <button type="button" className="social-btn google-btn" disabled={isLoading}>
+        <button
+          type="button"
+          className="social-btn google-btn"
+          disabled={isLoading}
+          onClick={() => handleOAuthLogin('google')}
+        >
           <span>Continue with Google</span>
         </button>
-        <button type="button" className="social-btn facebook-btn" disabled={isLoading}>
+        <button
+          type="button"
+          className="social-btn facebook-btn"
+          disabled={isLoading}
+          onClick={() => handleOAuthLogin('facebook')}
+        >
           <span>Continue with Facebook</span>
         </button>
       </div>

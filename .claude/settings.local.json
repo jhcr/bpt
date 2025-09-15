@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker logs:*)",
+      "Bash(docker compose:*)",
+      "Bash(make:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker-compose:*)",
+      "Bash(curl:*)",
+      "Bash(python -m pip install:*)",
+      "Bash(python -m pytest tests/unit/test_users_functions.py -v)",
+      "Bash(python:*)",
+      "Bash(tree:*)",
+      "Bash(for service in auth-service bff events-service userprofiles-service usersettings-service)",
+      "Bash(do echo \"=== $service ===\")",
+      "Bash(find:*)",
+      "Bash(done)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

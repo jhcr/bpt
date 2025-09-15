@@ -7,22 +7,29 @@ Only tracks versioned SQL files (in sql/ directory) in migration registry.
 """
 
 import os
-import glob
-import psycopg
 from pathlib import Path
+
+import psycopg
 import structlog
+from dotenv import load_dotenv
+from structlog.stdlib import LoggerFactory
 
 # Setup basic logging
 structlog.configure(
     processors=[
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
-        structlog.dev.ConsoleRenderer()
+        structlog.dev.ConsoleRenderer(),
     ],
-    wrapper_class=structlog.stdlib.BoundLogger
+    wrapper_class=structlog.stdlib.BoundLogger,
+    logger_factory=LoggerFactory(),
 )
 
 logger = structlog.get_logger(__name__)
+
+# Load ../.env (adjust if your layout differs)
+env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # Migration order - init and tables run every time, sql files are tracked
 MIGRATION_ORDER = ["init", "tables", "sql", "functions", "procedures"]
@@ -47,12 +54,15 @@ def apply_sql_file(cursor, file_path: Path) -> None:
 
 def ensure_tracking_table(cursor) -> None:
     """Ensure migration tracking table exists"""
-    cursor.execute(f"""
+    cursor.execute(
+        f"""
+        CREATE SCHEMA IF NOT EXISTS userprofiles AUTHORIZATION CURRENT_USER;
         CREATE TABLE IF NOT EXISTS {TRACKING_TABLE} (
             filename TEXT PRIMARY KEY,
             applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
-    """)
+    """
+    )
 
 
 def is_migration_applied(cursor, filename: str) -> bool:
@@ -72,50 +82,54 @@ def run_migrations():
     if not dsn:
         logger.error("PG_DSN environment variable is required")
         return False
-    
+
     db_root = get_db_root()
     logger.info("Starting migrations", db_root=str(db_root))
-    
+
     try:
         with psycopg.connect(dsn, autocommit=True) as conn:
             with conn.cursor() as cursor:
                 # Ensure tracking table exists
                 ensure_tracking_table(cursor)
-                
+
                 # Run migrations in order
                 for stage in MIGRATION_ORDER:
                     stage_dir = db_root / stage
                     if not stage_dir.exists():
                         logger.info("Skipping stage - directory not found", stage=stage)
                         continue
-                    
+
                     # Get all SQL files in this stage
                     sql_files = sorted(stage_dir.glob("**/*.sql"))
                     if not sql_files:
                         logger.info("No SQL files found in stage", stage=stage)
                         continue
-                    
-                    logger.info("Running migrations for stage", stage=stage, count=len(sql_files))
-                    
+
+                    logger.info(
+                        "Running migrations for stage",
+                        stage=stage,
+                        count=len(sql_files),
+                    )
+
                     for sql_file in sql_files:
                         filename = sql_file.name
-                        
+
                         if stage == "sql":
                             # Only sql/ directory migrations are tracked
                             if is_migration_applied(cursor, filename):
                                 logger.info("Skipping already applied migration", file=filename)
                                 continue
-                        
+
                         # Apply the migration
                         apply_sql_file(cursor, sql_file)
-                        
+
                         # Mark as applied if it's a tracked migration
                         if stage == "sql":
                             mark_migration_applied(cursor, filename)
-                
+
                 logger.info("All migrations completed successfully")
                 return True
-                
+
     except Exception as e:
         logger.error("Migration failed", error=str(e))
         return False

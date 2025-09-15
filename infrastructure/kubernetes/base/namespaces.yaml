@@ -1,0 +1,47 @@
+# Kubernetes namespaces for different environments
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-dev
+  labels:
+    name: app-dev
+    environment: development
+    istio-injection: enabled
+    
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-staging
+  labels:
+    name: app-staging  
+    environment: staging
+    istio-injection: enabled
+    
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-prod
+  labels:
+    name: app-prod
+    environment: production
+    istio-injection: enabled
+    
+---
+# Istio system namespace (if not already created)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    name: istio-system
+    
+---
+# Monitoring namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring

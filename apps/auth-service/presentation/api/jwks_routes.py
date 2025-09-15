@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Request
 import structlog
+from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -11,10 +11,10 @@ async def get_jwks(request: Request):
     try:
         jwt_signer = request.app.state.jwt_signer
         jwks = jwt_signer.get_jwks()
-        
+
         logger.debug("JWKS requested")
         return jwks
-        
+
     except Exception as e:
         logger.error("JWKS request failed", error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to get JWKS")
+        raise HTTPException(status_code=500, detail="Failed to get JWKS") from e
